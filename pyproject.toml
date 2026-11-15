@@ -26,3 +26,4 @@ target-version = ['py312']
 [tool.isort]
 profile = "black"
 line_length = 88
+lines_after_imports = 2

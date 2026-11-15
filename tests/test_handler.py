@@ -1,5 +1,6 @@
 import sys
 
+
 sys.path.insert(0, "/home/robertd/projetos/tech-challenge-lambda/src")
 
 from cpf_validator.handler import handler
