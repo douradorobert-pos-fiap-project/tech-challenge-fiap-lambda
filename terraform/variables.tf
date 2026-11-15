@@ -1,7 +1,11 @@
 variable "aws_region" {
   description = "AWS region where the infrastructure will be deployed"
   type        = string
-  default     = "us-east-1"
+
+  validation {
+    condition     = can(regex("^[a-z]{2}(-gov)?-[a-z]+-[0-9]+$", var.aws_region))
+    error_message = "aws_region must be a valid AWS region name."
+  }
 }
 
 variable "lambda_function_name" {
@@ -13,5 +17,9 @@ variable "lambda_function_name" {
 variable "lambda_execution_role_arn" {
   description = "ARN of existing IAM role for Lambda execution"
   type        = string
-  default     = "arn:aws:iam::264040538379:role/LabRole"
+
+  validation {
+    condition     = can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/.+$", var.lambda_execution_role_arn))
+    error_message = "lambda_execution_role_arn must be an AWS IAM role ARN."
+  }
 }

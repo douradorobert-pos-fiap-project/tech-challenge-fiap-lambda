@@ -40,18 +40,27 @@ poetry run python -c 'from cpf_validator.handler import handler; print(handler({
 
 ## Deploy na AWS
 
-Requer Terraform 1.0+, AWS CLI autenticada, permissões para Lambda e uma role de execução existente com confiança para `lambda.amazonaws.com`. Ajuste `lambda_execution_role_arn`, `lambda_function_name` e `aws_region` em `terraform/variables.tf` ou passe valores com `-var` para a conta de destino. O valor padrão da role aponta para o sandbox AWS Academy; confirme que ela existe na conta escolhida.
+Requer Terraform 1.0+, AWS CLI autenticada, permissões para Lambda, um bucket S3 de state criado previamente e uma role de execução existente com confiança para `lambda.amazonaws.com`. A região e a role são entradas obrigatórias para que uma troca de conta do AWS Academy não exija alteração no código.
+
+No GitHub, configure as Variables `AWS_REGION`, `TF_STATE_BUCKET` e `EXISTING_IAM_ROLE_ARN`. Para a conta sandbox atual, exemplos válidos são `us-east-1`, `terraform-state-891377055171-us-east-1` e `arn:aws:iam::891377055171:role/LabRole`. O ARN é apenas um exemplo operacional e não é default do Terraform.
+
+O backend utiliza a chave exclusiva `lambda/terraform.tfstate` e deve ser inicializado com configuração parcial:
 
 ```bash
-terraform -chdir=terraform init
+terraform -chdir=terraform init \
+  -backend-config="bucket=${TF_STATE_BUCKET}" \
+  -backend-config="key=lambda/terraform.tfstate" \
+  -backend-config="region=${AWS_REGION}" \
+  -backend-config="use_lockfile=true"
 terraform -chdir=terraform fmt -check
 terraform -chdir=terraform validate
-terraform -chdir=terraform plan -var='lambda_execution_role_arn=arn:aws:iam::SEU_ACCOUNT:role/SUA_ROLE'
-terraform -chdir=terraform apply -var='lambda_execution_role_arn=arn:aws:iam::SEU_ACCOUNT:role/SUA_ROLE'
+terraform -chdir=terraform plan \
+  -var="aws_region=${AWS_REGION}" \
+  -var="lambda_execution_role_arn=${EXISTING_IAM_ROLE_ARN}"
 terraform -chdir=terraform output lambda_function_arn
 ```
 
-O Terraform empacota `src/` em `lambda.zip` e publica a função. Em pushes para `main`, o GitHub Actions executa testes e lint, depois plan e apply. Configure `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` e, se a sessão usar credenciais temporárias, `AWS_SESSION_TOKEN` nos Secrets do repositório. A pipeline usa os valores padrão das variáveis Terraform; para outra conta, atualize ou sobrescreva a role antes do deploy. O state atual é local; compartilhe um backend remoto antes de alternar o gerenciamento da mesma função entre máquina local e runner.
+O Terraform empacota `src/` em `lambda.zip` e publica a função. Configure `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` e `AWS_SESSION_TOKEN` nos Secrets do repositório. As credenciais temporárias devem ser renovadas quando a sessão do AWS Academy expirar. A pipeline manual e suas validações de sandbox são descritas no workflow do repositório.
 
 ## Documentação das APIs
 
