@@ -1,82 +1,72 @@
-name: Deploy Infrastructure with Terraform
+name: Lambda CI and manual delivery
 
 on:
-  push:
+  pull_request:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
-  AWS_REGION: us-east-1
   TERRAFORM_DIR: terraform
 
 jobs:
-  test:
-    name: Test and Lint
+  quality:
+    name: Test, lint and validate
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: snok/install-poetry@v1
+        with:
+          version: 2.2.1
+          virtualenvs-create: true
+      - run: poetry install --no-interaction
+      - run: poetry run pytest --cov=src --cov-report=term-missing
+      - run: poetry run black --check .
+      - run: poetry run isort --check-only .
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform format
+        run: terraform -chdir=${{ env.TERRAFORM_DIR }} fmt -check -recursive
+      - name: Terraform init without remote backend
+        run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend=false -input=false
+      - name: Terraform validate
+        run: terraform -chdir=${{ env.TERRAFORM_DIR }} validate
 
-      - name: Install Poetry
-        run: pip install poetry
-
-      - name: Install dependencies
-        run: poetry install
-
-      - name: Run tests
-        run: poetry run pytest --cov=src --cov-report=term-missing
-
-      - name: Check code format with Black
-        run: poetry run black --check .
-
-      - name: Check import order with isort
-        run: poetry run isort --check-only .
-
-  terraform:
-    name: Terraform Deploy
-    needs: test
+  plan_apply:
+    name: Plan and apply Lambda
+    needs: quality
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-
+    environment: sandbox
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      EXISTING_IAM_ROLE_ARN: ${{ vars.EXISTING_IAM_ROLE_ARN }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_lambda_execution_role_arn: ${{ vars.EXISTING_IAM_ROLE_ARN }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Validate AWS identity
-        run: aws sts get-caller-identity
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Terraform fmt
-        working-directory: ${{ env.TERRAFORM_DIR }}
-        run: terraform fmt -check -recursive
-
-      - name: Terraform init
-        working-directory: ${{ env.TERRAFORM_DIR }}
-        run: terraform init -input=false
-
-      - name: Terraform validate
-        working-directory: ${{ env.TERRAFORM_DIR }}
-        run: terraform validate
-
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Validate sandbox configuration
+        run: bash scripts/validate-sandbox-config.sh
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform init with remote state
+        run: |
+          terraform -chdir=${{ env.TERRAFORM_DIR }} init -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=lambda/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="use_lockfile=true"
       - name: Terraform plan
-        working-directory: ${{ env.TERRAFORM_DIR }}
-        run: terraform plan -input=false -out=tfplan
-
+        run: terraform -chdir=${{ env.TERRAFORM_DIR }} plan -input=false -out=tfplan
       - name: Terraform apply
-        working-directory: ${{ env.TERRAFORM_DIR }}
-        run: terraform apply -auto-approve -input=false tfplan
+        run: terraform -chdir=${{ env.TERRAFORM_DIR }} apply -input=false -auto-approve tfplan
